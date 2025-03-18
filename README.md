@@ -198,6 +198,51 @@ Determine which movies have an average watch time greater than 100 minutes and r
 - **Analyze Average Watch Time**: Compute the average watch time per user for each movie.
 - **Identify Top Movies**: List movies where the average watch time is among the highest.
 
+#### **Code - src/task1_binge_watching_patterns.py**
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, round as spark_round
+
+def initialize_spark(app_name="Task1_Binge_Watching_Patterns"):
+    return SparkSession.builder.appName(app_name).getOrCreate()
+
+def load_data(spark, file_path):
+    schema = """
+        UserID INT, MovieID INT, MovieTitle STRING, Genre STRING, Rating FLOAT, ReviewCount INT,
+        WatchedYear INT, UserLocation STRING, AgeGroup STRING, StreamingPlatform STRING,
+        WatchTime INT, IsBingeWatched BOOLEAN, SubscriptionStatus STRING
+    """
+    return spark.read.csv(file_path, header=True, schema=schema)
+
+def detect_binge_watching_patterns(df):
+    binge_df = df.filter(col("IsBingeWatched") == True)
+    binge_counts = binge_df.groupBy("AgeGroup").agg(count("*").alias("BingeWatchers"))
+    total_counts = df.groupBy("AgeGroup").agg(count("*").alias("TotalUsers"))
+    
+    result_df = binge_counts.join(total_counts, "AgeGroup") \
+        .withColumn("Percentage", spark_round((col("BingeWatchers") / col("TotalUsers")) * 100, 2)) \
+        .select("AgeGroup", "BingeWatchers", "Percentage") \
+        .orderBy("AgeGroup")
+    
+    return result_df
+
+def write_output(result_df, output_path):
+    result_df.coalesce(1).write.csv(output_path, header=True, mode='overwrite')
+
+def main():
+    spark = initialize_spark()
+    input_file = "input/movie_ratings_data.csv"
+    output_file = "outputs/binge_watching_patterns.csv"
+    
+    df = load_data(spark, input_file)
+    result_df = detect_binge_watching_patterns(df)
+    write_output(result_df, output_file)
+    spark.stop()
+
+if __name__ == "__main__":
+    main()
+
+```
 
 **Expected Outcome:**
 
@@ -207,8 +252,11 @@ A list of departments meeting the specified criteria, along with the correspondi
 
 | Age Group   | Binge Watchers | Percentage |
 |-------------|----------------|------------|
-| Teen        | 195            | 45%        |
-| Adult       | 145            | 38%        |
+| Adult       | 14             | 43.75%     |
+| Senior      | 13             | 39.39%     |
+| Teen        | 23             | 65.71%     |
+
+
 
 ---
 
@@ -222,7 +270,55 @@ Find users who are **at risk of churn** by identifying those with **canceled sub
 
 - **Filter Users**: Select users who have `SubscriptionStatus = 'Canceled'`.  
 - **Analyze Watch Time**: Identify users with `WatchTime < 100` minutes.  
-- **Count At-Risk Users**: Compute the total number of such users.  
+- **Count At-Risk Users**: Compute the total number of such users.
+
+  #### **Code - src/task2_churn_risk_users.py**
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count
+
+def initialize_spark(app_name="Task2_Churn_Risk_Users"):
+    return SparkSession.builder.appName(app_name).getOrCreate()
+
+def load_data(spark, file_path):
+    schema = """
+        UserID INT, MovieID INT, MovieTitle STRING, Genre STRING, Rating FLOAT, ReviewCount INT,
+        WatchedYear INT, UserLocation STRING, AgeGroup STRING, StreamingPlatform STRING,
+        WatchTime INT, IsBingeWatched BOOLEAN, SubscriptionStatus STRING
+    """
+    return spark.read.csv(file_path, header=True, schema=schema)
+
+def identify_churn_risk_users(df):
+    """
+    Identify users with canceled subscriptions and low watch time (<100 minutes).
+    """
+    churn_risk_df = df.filter((col("SubscriptionStatus") == "Canceled") & (col("WatchTime") < 100))
+    churn_count = churn_risk_df.count()
+
+    # Create a DataFrame matching the expected format
+    result = [( "Users with low watch time & canceled subscriptions", churn_count )]
+    columns = ["Churn Risk Users", "Total Users"]
+
+    return df.sparkSession.createDataFrame(result, columns)
+
+
+def write_output(result_df, output_path):
+    result_df.coalesce(1).write.csv(output_path, header=True, mode='overwrite')
+
+def main():
+    spark = initialize_spark()
+    input_file = "input/movie_ratings_data.csv"
+    output_file = "outputs/churn_risk_users.csv"
+    
+    df = load_data(spark, input_file)
+    result_df = identify_churn_risk_users(df)
+    write_output(result_df, output_file)
+    spark.stop()
+
+if __name__ == "__main__":
+    main()
+
+```
 
 **Expected Outcome:**  
 
@@ -233,7 +329,7 @@ A count of users who **canceled their subscriptions and had low engagement**, hi
 
 |Churn Risk Users                                  |	Total Users |
 |--------------------------------------------------|--------------|
-|Users with low watch time & canceled subscriptions|	350         |
+|Users with low watch time & canceled subscriptions|	10          |
 
 
 
@@ -249,7 +345,46 @@ Analyze how **movie-watching trends** have changed over the years and find peak 
 
 - **Group by Watched Year**: Count the number of movies watched in each year.  
 - **Analyze Trends**: Identify patterns and compare year-over-year growth in movie consumption.  
-- **Find Peak Years**: Highlight the years with the highest number of movies watched.  
+- **Find Peak Years**: Highlight the years with the highest number of movies watched.
+
+  #### **Code - src/task3_movie_watching_trends.py**
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count
+
+def initialize_spark(app_name="Task3_Trend_Analysis"):
+    return SparkSession.builder.appName(app_name).getOrCreate()
+
+def load_data(spark, file_path):
+    schema = """
+        UserID INT, MovieID INT, MovieTitle STRING, Genre STRING, Rating FLOAT, ReviewCount INT,
+        WatchedYear INT, UserLocation STRING, AgeGroup STRING, StreamingPlatform STRING,
+        WatchTime INT, IsBingeWatched BOOLEAN, SubscriptionStatus STRING
+    """
+    return spark.read.csv(file_path, header=True, schema=schema)
+
+def analyze_movie_watching_trends(df):
+    trends_df = df.groupBy("WatchedYear").agg(count("*").alias("MoviesWatched")) \
+                  .orderBy("WatchedYear")
+    return trends_df
+
+def write_output(result_df, output_path):
+    result_df.coalesce(1).write.csv(output_path, header=True, mode='overwrite')
+
+def main():
+    spark = initialize_spark()
+    input_file = "input/movie_ratings_data.csv"
+    output_file = "outputs/movie_watching_trends.csv"
+    
+    df = load_data(spark, input_file)
+    result_df = analyze_movie_watching_trends(df)
+    write_output(result_df, output_file)
+    spark.stop()
+
+if __name__ == "__main__":
+    main()
+
+```
 
 **Expected Outcome:**  
 
@@ -259,34 +394,36 @@ A summary of **movie-watching trends** over the years, indicating peak years for
 
 | Watched Year | Movies watched |
 |--------------|----------------|
-| 2020         | 1200           |
-| 2021         | 1500           |
-| 2022         | 2100           |
-| 2023         | 2800           |
+| 2018         | 19             |
+| 2019         | 18             |
+| 2020         | 12             |
+| 2021         | 15             |
+| 2022         | 15             |
+| 2023         | 21             |  
 
 
 ---
 
-## **Grading Criteria**
 
-Your assignment will be evaluated based on the following criteria:
+## **Challenges Faced**
+- Handling large CSV datasets efficiently in Spark.
+- Joining DataFrames accurately while maintaining data integrity.
+- Computing percentages and rounding results correctly.
+- Filtering data with multiple conditions using PySpark APIs.
 
-- **Question 1**: Correct identification of departments with over 50% high satisfaction and engagement (1 mark).
-- **Question 2**: Accurate analysis of employees who feel valued but didn’t suggest improvements, including proportion (1 mark).
-- **Question 3**: Proper comparison of engagement levels across job titles and correct identification of the top-performing job title (1 mark).
+## **Approach**
+- Loaded CSV data into Spark DataFrames with predefined schema.
+- Used DataFrame filtering and grouping operations to analyze each task.
+- Applied Spark SQL functions like `count`, `round`, and `join` for calculations.
+- Structured the output in the required format and wrote to CSV.
 
-**Total Marks: 3**
+## **Findings**
+- **Teenagers** binge-watch the most compared to other age groups.
+- **Churn Risk Users** with less than 100 minutes watch time and canceled subscriptions were identified clearly.
+- Movie-watching peaked in **2023** based on the dataset provided.
 
----
+👍 **Good luck, and happy analyzing!**
 
-## **Submission Guidelines**
 
-- **Code**: Submit all your PySpark scripts located in the `src/` directory.
-- **Report**: Include a report summarizing your findings for each task. Ensure that your report is well-structured, with clear headings and explanations.
-- **Data**: Ensure that the `movie_ratings_data.csv` used for analysis is included in the `data/` directory or provide a script for data generation if applicable.
-- **Format**: Submit your work in a zipped folder containing all necessary files.
-- **Deadline**: [Insert Deadline Here]
 
----
 
-Good luck, and happy analyzing!
